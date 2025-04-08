@@ -243,27 +243,39 @@ def carica_dati():
         # Percorso alla directory data
         data_dir = os.path.join(project_dir, "data")
         
-        # Debug info nella sidebar
-        st.sidebar.markdown("### 📁 Percorsi")
-        if st.sidebar.checkbox("Mostra percorsi file"):
-            st.sidebar.write("Directory corrente:", current_dir)
-            st.sidebar.write("Directory progetto:", project_dir)
-            st.sidebar.write("Directory dati:", data_dir)
-            st.sidebar.write("File Excel:", os.path.join(data_dir, "voti_rielaborati.xlsx"))
-            st.sidebar.write("File esiste:", os.path.exists(os.path.join(data_dir, "voti_rielaborati.xlsx")))
-        
         # Carica i file con percorsi assoluti
         municipi = gpd.read_file(os.path.join(data_dir, "municipi.geojson"))
         sezioni = gpd.read_file(os.path.join(data_dir, "sezioni.geojson"))
         uu = gpd.read_file(os.path.join(data_dir, "unita_urbanistiche.geojson"))
         voti = pd.read_excel(os.path.join(data_dir, "voti_rielaborati.xlsx"))
         
-        return municipi, sezioni, uu, voti
+        # Restituisci anche le informazioni sui percorsi per il debug, ma non usare widget qui
+        percorsi_info = {
+            "current_dir": current_dir,
+            "project_dir": project_dir,
+            "data_dir": data_dir,
+            "excel_path": os.path.join(data_dir, "voti_rielaborati.xlsx"),
+            "excel_exists": os.path.exists(os.path.join(data_dir, "voti_rielaborati.xlsx"))
+        }
+        
+        return municipi, sezioni, uu, voti, percorsi_info
     except Exception as e:
         st.error(f"Errore nel caricamento dei dati: {str(e)}")
         if "No such file or directory" in str(e):
             st.error("File non trovato. Verifica che i file dati siano nella directory 'data'.")
         st.stop()
+
+# Carica i dati
+municipi, sezioni, uu, voti, percorsi_info = carica_dati()
+
+# Mostra le informazioni sui percorsi (fuori dalla funzione cached)
+st.sidebar.markdown("### 📁 Percorsi")
+if st.sidebar.checkbox("Mostra percorsi file"):
+    st.sidebar.write("Directory corrente:", percorsi_info["current_dir"])
+    st.sidebar.write("Directory progetto:", percorsi_info["project_dir"])
+    st.sidebar.write("Directory dati:", percorsi_info["data_dir"])
+    st.sidebar.write("File Excel:", percorsi_info["excel_path"])
+    st.sidebar.write("File esiste:", percorsi_info["excel_exists"])
 
 # Calcola le percentuali di CSX e CDX
 def calcola_percentuali_coalizioni(df):
