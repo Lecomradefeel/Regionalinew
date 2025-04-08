@@ -45,17 +45,24 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                 df_voti[join_col] = df_voti[join_col].astype(str)
                 
                 try:
+                    # Assicurati che tutte le colonne percentuali siano numeriche
+                    numeric_df = df_voti.copy()
+                    for col in numeric_df.columns:
+                        if "%" in col:
+                            numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce')
+                    
                     # Calcola percentuali CSX e CDX se non presenti
-                    if 'CSX %' not in df_voti.columns and partiti_cols:
+                    if 'CSX %' not in numeric_df.columns and partiti_cols:
                         csx_cols = [col for col in partiti_cols if any(p in col for p in ["PD", "M5S", "AVS", "Orlando"])]
-                        df_voti['CSX %'] = df_voti[csx_cols].sum(axis=1)
+                        numeric_df['CSX %'] = numeric_df[csx_cols].sum(axis=1)
                     
-                    if 'CDX %' not in df_voti.columns and partiti_cols:
+                    if 'CDX %' not in numeric_df.columns and partiti_cols:
                         cdx_cols = [col for col in partiti_cols if any(p in col for p in ["Bucci", "Lega", "FI", "FdI"])]
-                        df_voti['CDX %'] = df_voti[cdx_cols].sum(axis=1)
+                        numeric_df['CDX %'] = numeric_df[cdx_cols].sum(axis=1)
                     
-                    # Raggruppa i dati per la colonna di join se necessario
-                    grouped_df = df_voti.groupby(join_col).mean().reset_index()
+                    # Raggruppa i dati per la colonna di join - solo colonne numeriche
+                    numeric_cols = numeric_df.select_dtypes(include=['number']).columns
+                    grouped_df = numeric_df.groupby(join_col)[numeric_cols].mean().reset_index()
                     
                     # Unisci con i dati geografici
                     gdf_copy = gdf_copy.merge(grouped_df, how='left', left_on=colonna_id, right_on=join_col)
@@ -63,23 +70,26 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                     # Crea la differenza per la colorazione
                     if 'CSX %' in gdf_copy.columns and 'CDX %' in gdf_copy.columns:
                         gdf_copy['Diff'] = gdf_copy['CSX %'] - gdf_copy['CDX %']
+                        print(f"Range Diff: min={gdf_copy['Diff'].min()}, max={gdf_copy['Diff'].max()}")
                         color_col = 'Diff'
                     else:
                         color_col = None
                     
-                    # Crea dati per hover
-                    hover_data = {colonna_id: True}
+                    # Crea dati per hover più leggibili
+                    hover_data = {}
                     
                     # Aggiungi le colonne di percentuali se disponibili
-                    for col in ['CSX %', 'CDX %']:
+                    for col in ['CSX %', 'CDX %', 'Diff']:
                         if col in gdf_copy.columns:
                             hover_data[col] = ':.1f'
                     
-                    # Aggiungi le colonne dei partiti se disponibili
-                    if partiti_cols:
-                        for col in partiti_cols:
-                            if col in gdf_copy.columns:
-                                hover_data[col] = ':.1f'
+                    # Aggiungi solo le colonne principali dei partiti per non sovraccaricare il tooltip
+                    partiti_principali = [
+                        "PD %", "M5S %", "FdI %", "Lega %", "FI %"
+                    ]
+                    for col in partiti_principali:
+                        if col in gdf_copy.columns:
+                            hover_data[col] = ':.1f'
                     
                 except Exception as e:
                     print(f"Errore nel join dei dati: {str(e)}")
@@ -98,13 +108,26 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
             # Mappa colorata in base alla differenza CSX-CDX
             # Verifica che ci siano effettivamente differenze da visualizzare
             if gdf_copy['Diff'].notna().any():
+                # Usa una scala di colori migliorata e range adattato ai dati
+                max_abs_diff = max(
+                    abs(gdf_copy['Diff'].min() if not pd.isna(gdf_copy['Diff'].min()) else 0), 
+                    abs(gdf_copy['Diff'].max() if not pd.isna(gdf_copy['Diff'].max()) else 0)
+                )
+                range_color = [-max_abs_diff, max_abs_diff]  # Scala simmetrica
+                
                 fig = px.choropleth_mapbox(
                     gdf_copy,
                     geojson=gdf_copy.__geo_interface__,
                     locations='id',
-                    color='Diff',  # Usa direttamente Diff
-                    color_continuous_scale=["blue", "white", "red"],
-                    range_color=[-30, 30],  # Scala da -30% a +30%
+                    color='Diff',
+                    color_continuous_scale=[
+                        [0, "rgb(0, 0, 255)"],       # Blu forte per CDX molto avanti
+                        [0.4, "rgb(180, 180, 255)"], # Blu chiaro per CDX poco avanti
+                        [0.5, "rgb(255, 255, 255)"], # Bianco per parità
+                        [0.6, "rgb(255, 180, 180)"], # Rosso chiaro per CSX poco avanti
+                        [1, "rgb(255, 0, 0)"]        # Rosso forte per CSX molto avanti
+                    ],
+                    range_color=range_color,
                     hover_name=gdf_copy[colonna_id],
                     hover_data=hover_data,
                     mapbox_style="carto-positron",
@@ -117,8 +140,8 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                 fig.update_layout(
                     coloraxis_colorbar=dict(
                         title="Differenza % CSX-CDX",
-                        tickvals=[-30, -20, -10, 0, 10, 20, 30],
-                        ticktext=["-30%", "-20%", "-10%", "0%", "+10%", "+20%", "+30%"]
+                        tickvals=[-20, -10, 0, 10, 20],
+                        ticktext=["-20%", "-10%", "0%", "+10%", "+20%"]
                     )
                 )
             else:
