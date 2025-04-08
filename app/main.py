@@ -3,32 +3,234 @@
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
+import plotly.express as px
+import plotly.graph_objects as go
 import sys, os
-
-# Assicura che le directory necessarie siano nel path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
-sys.path.append(current_dir)
-sys.path.append(parent_dir)
-
-# Importa le funzioni di utilità
-try:
-    from utils.map_utils import crea_mappa_folium, crea_mappa_plotly
-    from utils.chart_utils import grafico_torta_csx, grafico_barre_partiti
-    from streamlit_folium import folium_static
-except ImportError:
-    try:
-        from app.utils.map_utils import crea_mappa_folium, crea_mappa_plotly
-        from app.utils.chart_utils import grafico_torta_csx, grafico_barre_partiti
-        from streamlit_folium import folium_static
-    except ImportError:
-        st.error("Impossibile importare i moduli utils. Verifica la struttura del progetto.")
-        st.stop()
 
 # Configurazione pagina
 st.set_page_config(layout="wide", page_title="Dashboard Elezioni Regionali 2024", page_icon="🗳️")
 
 st.title("🗳️ Dashboard Elezioni Regionali 2024 - Genova")
+
+# Funzioni di utilità incorporate direttamente (prima erano in utils/map_utils.py e utils/chart_utils.py)
+def formatta_percentuale(valore):
+    """Formatta un valore numerico come percentuale con 1 decimale"""
+    if pd.isna(valore):
+        return "N/A"
+    return f"{valore:.1f}%"
+
+def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=None, partiti_cols=None):
+    """
+    Crea una mappa Plotly con i dati GeoJSON e informazioni sui voti.
+    """
+    try:
+        # Converti a WGS84 se necessario
+        if gdf.crs and str(gdf.crs) != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+        
+        # Unisci i dati di voto se disponibili
+        if df_voti is not None and join_col is not None:
+            # Crea una copia per evitare di modificare l'originale
+            gdf_copy = gdf.copy()
+            
+            # Preparazione dei dati per il join
+            if join_col not in df_voti.columns:
+                print(f"Colonna di join '{join_col}' non trovata in df_voti")
+                gdf_copy['id'] = range(len(gdf_copy))
+                hover_data = {colonna_id: True}
+                color_col = None
+            else:
+                # Converte la colonna di join in string per entrambi i dataframe
+                gdf_copy[colonna_id] = gdf_copy[colonna_id].astype(str)
+                df_voti[join_col] = df_voti[join_col].astype(str)
+                
+                try:
+                    # Calcola percentuali CSX e CDX se non presenti
+                    if 'CSX %' not in df_voti.columns and partiti_cols:
+                        csx_cols = [col for col in partiti_cols if any(p in col for p in ["PD", "M5S", "AVS", "Orlando"])]
+                        df_voti['CSX %'] = df_voti[csx_cols].sum(axis=1)
+                    
+                    if 'CDX %' not in df_voti.columns and partiti_cols:
+                        cdx_cols = [col for col in partiti_cols if any(p in col for p in ["Bucci", "Lega", "FI", "FdI"])]
+                        df_voti['CDX %'] = df_voti[cdx_cols].sum(axis=1)
+                    
+                    # Raggruppa i dati per la colonna di join se necessario
+                    grouped_df = df_voti.groupby(join_col).mean().reset_index()
+                    
+                    # Unisci con i dati geografici
+                    gdf_copy = gdf_copy.merge(grouped_df, how='left', left_on=colonna_id, right_on=join_col)
+                    
+                    # Crea la differenza per la colorazione
+                    if 'CSX %' in gdf_copy.columns and 'CDX %' in gdf_copy.columns:
+                        gdf_copy['Diff'] = gdf_copy['CSX %'] - gdf_copy['CDX %']
+                        color_col = 'Diff'
+                    else:
+                        color_col = None
+                    
+                    # Crea dati per hover
+                    hover_data = {colonna_id: True}
+                    
+                    # Aggiungi le colonne di percentuali se disponibili
+                    for col in ['CSX %', 'CDX %']:
+                        if col in gdf_copy.columns:
+                            hover_data[col] = ':.1f'
+                    
+                    # Aggiungi le colonne dei partiti se disponibili
+                    if partiti_cols:
+                        for col in partiti_cols:
+                            if col in gdf_copy.columns:
+                                hover_data[col] = ':.1f'
+                    
+                except Exception as e:
+                    print(f"Errore nel join dei dati: {str(e)}")
+                    gdf_copy['id'] = range(len(gdf_copy))
+                    hover_data = {colonna_id: True}
+                    color_col = None
+        else:
+            # Se non ci sono dati di voto, usa il GeoDataFrame originale
+            gdf_copy = gdf.copy()
+            gdf_copy['id'] = range(len(gdf_copy))
+            hover_data = {colonna_id: True}
+            color_col = None
+        
+        # Crea una mappa con Plotly
+        if color_col and 'Diff' in gdf_copy.columns:
+            # Mappa colorata in base alla differenza CSX-CDX
+            # Verifica che ci siano effettivamente differenze da visualizzare
+            if gdf_copy['Diff'].notna().any():
+                fig = px.choropleth_mapbox(
+                    gdf_copy,
+                    geojson=gdf_copy.__geo_interface__,
+                    locations='id',
+                    color='Diff',  # Usa direttamente Diff
+                    color_continuous_scale=["blue", "white", "red"],
+                    range_color=[-30, 30],  # Scala da -30% a +30%
+                    hover_name=gdf_copy[colonna_id],
+                    hover_data=hover_data,
+                    mapbox_style="carto-positron",
+                    center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
+                    zoom=10,
+                    opacity=opacita
+                )
+                
+                # Aggiungi una title per la colorbar
+                fig.update_layout(
+                    coloraxis_colorbar=dict(
+                        title="Differenza % CSX-CDX",
+                        tickvals=[-30, -20, -10, 0, 10, 20, 30],
+                        ticktext=["-30%", "-20%", "-10%", "0%", "+10%", "+20%", "+30%"]
+                    )
+                )
+            else:
+                # Se non ci sono differenze valide, usa il colore predefinito
+                fig = px.choropleth_mapbox(
+                    gdf_copy,
+                    geojson=gdf_copy.__geo_interface__,
+                    locations='id',
+                    hover_name=gdf_copy[colonna_id],
+                    hover_data=hover_data,
+                    mapbox_style="carto-positron",
+                    center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
+                    zoom=10,
+                    opacity=opacita,
+                    color_discrete_sequence=[colore]
+                )
+        else:
+            # Mappa con colore fisso
+            fig = px.choropleth_mapbox(
+                gdf_copy,
+                geojson=gdf_copy.__geo_interface__,
+                locations='id',
+                hover_name=gdf_copy[colonna_id],
+                hover_data=hover_data,
+                mapbox_style="carto-positron",
+                center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
+                zoom=10,
+                opacity=opacita,
+                color_discrete_sequence=[colore]
+            )
+        
+        # Aumenta le dimensioni della mappa
+        fig.update_layout(
+            margin={"r": 0, "t": 0, "l": 0, "b": 0},
+            height=600  # Altezza aumentata
+        )
+        
+        return fig
+    except Exception as e:
+        print(f"Errore nella creazione della mappa Plotly: {str(e)}")
+        fig = go.Figure()
+        fig.update_layout(title=f"Errore: {str(e)}")
+        return fig
+
+def grafico_torta_csx(df, livello, valore):
+    """
+    Funzione per mostrare un grafico a torta del voto CSX.
+    """
+    col_pd = "PD %"
+    col_m5s = "M5S %"
+    col_avs = "AVS - Lista Sansa - Possibile %"
+    col_orlando = "liste Orlando %"
+
+    df_filtrato = df[df[livello] == valore]
+
+    if df_filtrato.empty:
+        return None
+
+    media_pd = df_filtrato[col_pd].mean()
+    media_m5s = df_filtrato[col_m5s].mean()
+    media_avs = df_filtrato[col_avs].mean()
+    media_orlando = df_filtrato[col_orlando].mean()
+
+    dati = pd.DataFrame({
+        "Partito": ["PD", "M5S", "AVS", "Liste Orlando"],
+        "Percentuale": [media_pd, media_m5s, media_avs, media_orlando]
+    })
+
+    fig = px.pie(
+        dati,
+        names="Partito",
+        values="Percentuale",
+        title=f"Spaccato CSX - {livello}: {valore}",
+        hole=0.3,
+        color_discrete_sequence=["#235789", "#F1D302", "#C1292E", "#6a0dad"]
+    )
+
+    fig.update_traces(textinfo="label+percent", pull=[0.05] * 4)
+    fig.update_layout(height=400, margin={"t": 50, "b": 0, "l": 0, "r": 0})
+
+    return fig
+
+def grafico_barre_partiti(df, livello, valore):
+    """
+    Funzione per grafico a barre comparativo partiti.
+    """
+    df_filtrato = df[df[livello] == valore]
+    if df_filtrato.empty:
+        return None
+
+    partiti = [
+        "PD %", "M5S %", "AVS - Lista Sansa - Possibile %",
+        "liste Orlando %", "liste Bucci %", "Lega %", "FI %", "FdI %"
+    ]
+
+    medie = {partito: df_filtrato[partito].mean() for partito in partiti if partito in df_filtrato.columns}
+
+    df_bar = pd.DataFrame({
+        "Partito": list(medie.keys()),
+        "Percentuale": list(medie.values())
+    })
+
+    fig = px.bar(
+        df_bar,
+        x="Partito",
+        y="Percentuale",
+        title=f"Confronto Partiti - {livello}: {valore}",
+        text_auto=".1f"
+    )
+
+    fig.update_layout(height=400, margin={"t": 50, "b": 0, "l": 0, "r": 0})
+    return fig
 
 # Caricamento dati
 @st.cache_data
@@ -63,8 +265,46 @@ def carica_dati():
             st.error("File non trovato. Verifica che i file dati siano nella directory 'data'.")
         st.stop()
 
+# Calcola le percentuali di CSX e CDX
+def calcola_percentuali_coalizioni(df):
+    """Calcola le percentuali di CSX e CDX e aggiunge le colonne al DataFrame"""
+    # Identifica le colonne dei partiti di CSX e CDX
+    csx_cols = []
+    cdx_cols = []
+    
+    for col in df.columns:
+        if "%" in col:
+            if any(p in col for p in ["PD", "M5S", "AVS", "Orlando"]):
+                csx_cols.append(col)
+            elif any(p in col for p in ["Bucci", "Lega", "FI", "FdI"]):
+                cdx_cols.append(col)
+    
+    # Calcola le percentuali totali
+    if csx_cols:
+        df['CSX %'] = df[csx_cols].sum(axis=1)
+    if cdx_cols:
+        df['CDX %'] = df[cdx_cols].sum(axis=1)
+    
+    return df, csx_cols, cdx_cols
+
 # Carica i dati
 municipi, sezioni, uu, voti = carica_dati()
+
+# Aggiungi le percentuali delle coalizioni
+voti, csx_cols, cdx_cols = calcola_percentuali_coalizioni(voti)
+
+# Debug per differenze CSX-CDX
+if st.sidebar.checkbox("Debug differenze CSX-CDX"):
+    st.sidebar.write("Statistiche CSX-CDX:")
+    if 'CSX %' in voti.columns and 'CDX %' in voti.columns:
+        voti['Diff'] = voti['CSX %'] - voti['CDX %']
+        st.sidebar.write(f"Min: {voti['Diff'].min():.1f}%")
+        st.sidebar.write(f"Max: {voti['Diff'].max():.1f}%")
+        st.sidebar.write(f"Media: {voti['Diff'].mean():.1f}%")
+        st.sidebar.write("Top 5 CSX:")
+        st.sidebar.write(voti.nlargest(5, 'Diff')[['Municipio', 'Diff']].reset_index(drop=True))
+        st.sidebar.write("Top 5 CDX:")
+        st.sidebar.write(voti.nsmallest(5, 'Diff')[['Municipio', 'Diff']].reset_index(drop=True))
 
 # Determina automaticamente quali colonne usare
 def determine_columns():
@@ -165,8 +405,7 @@ partiti_cols = trova_colonne_partiti(voti)
 # Sidebar
 st.sidebar.title("🧭 Filtri")
 mappa_tipo = st.sidebar.selectbox("Scegli la mappa:", ["Municipi", "Sezioni Elettorali", "Unità Urbanistiche"])
-tipo_visualizzazione = st.sidebar.radio("Visualizzazione:", ["Folium", "Plotly"])
-colore = st.sidebar.color_picker("Colore poligoni", "#2563eb")
+colore = st.sidebar.color_picker("Colore poligoni (per aree senza dati)", "#2563eb")
 opacita = st.sidebar.slider("Opacità", 0.0, 1.0, 0.6)
 
 # Mappa + grafici
@@ -181,28 +420,16 @@ if mappa_tipo == "Municipi":
                 municipio_voti_col = col
                 break
     
-    if tipo_visualizzazione == "Folium":
-        m = crea_mappa_folium(
-            municipi, 
-            municipio_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=municipio_voti_col,
-            partiti_cols=partiti_cols
-        )
-        folium_static(m)
-    else:
-        fig = crea_mappa_plotly(
-            municipi, 
-            municipio_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=municipio_voti_col,
-            partiti_cols=partiti_cols
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    fig = crea_mappa_plotly(
+        municipi, 
+        municipio_col, 
+        colore, 
+        opacita, 
+        df_voti=voti, 
+        join_col=municipio_voti_col,
+        partiti_cols=partiti_cols
+    )
+    st.plotly_chart(fig, use_container_width=True)
     
     # Aggiungi legenda per la colorazione della mappa
     st.markdown("""
@@ -282,28 +509,16 @@ elif mappa_tipo == "Sezioni Elettorali":
                 sezione_voti_col = col
                 break
     
-    if tipo_visualizzazione == "Folium":
-        m = crea_mappa_folium(
-            sezioni, 
-            sezione_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=sezione_voti_col,
-            partiti_cols=partiti_cols
-        )
-        folium_static(m)
-    else:
-        fig = crea_mappa_plotly(
-            sezioni, 
-            sezione_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=sezione_voti_col,
-            partiti_cols=partiti_cols
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    fig = crea_mappa_plotly(
+        sezioni, 
+        sezione_col, 
+        colore, 
+        opacita, 
+        df_voti=voti, 
+        join_col=sezione_voti_col,
+        partiti_cols=partiti_cols
+    )
+    st.plotly_chart(fig, use_container_width=True)
     
     # Aggiungi legenda per la colorazione della mappa
     st.markdown("""
@@ -345,28 +560,16 @@ elif mappa_tipo == "Unità Urbanistiche":
                 uu_voti_col = col
                 break
     
-    if tipo_visualizzazione == "Folium":
-        m = crea_mappa_folium(
-            uu, 
-            uu_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=uu_voti_col,
-            partiti_cols=partiti_cols
-        )
-        folium_static(m)
-    else:
-        fig = crea_mappa_plotly(
-            uu, 
-            uu_col, 
-            colore, 
-            opacita, 
-            df_voti=voti, 
-            join_col=uu_voti_col,
-            partiti_cols=partiti_cols
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    fig = crea_mappa_plotly(
+        uu, 
+        uu_col, 
+        colore, 
+        opacita, 
+        df_voti=voti, 
+        join_col=uu_voti_col,
+        partiti_cols=partiti_cols
+    )
+    st.plotly_chart(fig, use_container_width=True)
     
     # Aggiungi legenda per la colorazione della mappa
     st.markdown("""
