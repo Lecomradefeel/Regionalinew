@@ -586,7 +586,6 @@ elif mappa_tipo == "Unità Urbanistiche":
         uu_scelta = st.selectbox("Seleziona un'unità urbanistica", sorted(voti[uu_voti_col].dropna().unique()))
         fig_torta = grafico_torta_csx(voti, uu_voti_col, uu_scelta)
         fig_barre = grafico_barre_partiti(voti, uu_voti_col, uu_scelta)
-        if fig_torta: st.plot
         if fig_torta: st.plotly_chart(fig_torta, use_container_width=True)
         if fig_barre: st.plotly_chart(fig_barre, use_container_width=True)
     else:
