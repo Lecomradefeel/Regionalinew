@@ -12,7 +12,7 @@ st.set_page_config(layout="wide", page_title="Dashboard Elezioni Regionali 2024"
 
 st.title("🗳️ Dashboard Elezioni Regionali 2024 - Genova")
 
-# Funzioni di utilità incorporate direttamente (prima erano in utils/map_utils.py e utils/chart_utils.py)
+# Funzioni di utilità incorporate direttamente
 def formatta_percentuale(valore):
     """Formatta un valore numerico come percentuale con 1 decimale"""
     if pd.isna(valore):
@@ -249,33 +249,12 @@ def carica_dati():
         uu = gpd.read_file(os.path.join(data_dir, "unita_urbanistiche.geojson"))
         voti = pd.read_excel(os.path.join(data_dir, "voti_rielaborati.xlsx"))
         
-        # Restituisci anche le informazioni sui percorsi per il debug, ma non usare widget qui
-        percorsi_info = {
-            "current_dir": current_dir,
-            "project_dir": project_dir,
-            "data_dir": data_dir,
-            "excel_path": os.path.join(data_dir, "voti_rielaborati.xlsx"),
-            "excel_exists": os.path.exists(os.path.join(data_dir, "voti_rielaborati.xlsx"))
-        }
-        
-        return municipi, sezioni, uu, voti, percorsi_info
+        return municipi, sezioni, uu, voti
     except Exception as e:
         st.error(f"Errore nel caricamento dei dati: {str(e)}")
         if "No such file or directory" in str(e):
             st.error("File non trovato. Verifica che i file dati siano nella directory 'data'.")
         st.stop()
-
-# Carica i dati
-municipi, sezioni, uu, voti, percorsi_info = carica_dati()
-
-# Mostra le informazioni sui percorsi (fuori dalla funzione cached)
-st.sidebar.markdown("### 📁 Percorsi")
-if st.sidebar.checkbox("Mostra percorsi file"):
-    st.sidebar.write("Directory corrente:", percorsi_info["current_dir"])
-    st.sidebar.write("Directory progetto:", percorsi_info["project_dir"])
-    st.sidebar.write("Directory dati:", percorsi_info["data_dir"])
-    st.sidebar.write("File Excel:", percorsi_info["excel_path"])
-    st.sidebar.write("File esiste:", percorsi_info["excel_exists"])
 
 # Calcola le percentuali di CSX e CDX
 def calcola_percentuali_coalizioni(df):
@@ -607,7 +586,8 @@ elif mappa_tipo == "Unità Urbanistiche":
         uu_scelta = st.selectbox("Seleziona un'unità urbanistica", sorted(voti[uu_voti_col].dropna().unique()))
         fig_torta = grafico_torta_csx(voti, uu_voti_col, uu_scelta)
         fig_barre = grafico_barre_partiti(voti, uu_voti_col, uu_scelta)
-        if fig_torta: st.plotly_chart(fig_torta, use_container_width=True)
+        if fig_torta: st.plot
+            if fig_torta: st.plotly_chart(fig_torta, use_container_width=True)
         if fig_barre: st.plotly_chart(fig_barre, use_container_width=True)
     else:
         st.error(f"Colonna 'UNITA_URBANISTICA' non trovata nel file voti. Colonne disponibili: {voti.columns.tolist()}")
