@@ -3,13 +3,17 @@
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
-from streamlit_folium import folium_static
-from app.utils.map_utils import crea_mappa_folium, crea_mappa_plotly
-from app.utils.chart_utils import grafico_torta_csx, grafico_barre_partiti
-
-# Assicura che la cartella padre sia nel path
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# Aggiungi il percorso corrente al PATH di Python
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+
+# Ora importa direttamente da utils (senza 'app.')
+from utils.map_utils import crea_mappa_folium, crea_mappa_plotly
+from utils.chart_utils import grafico_torta_csx, grafico_barre_partiti
+
+from streamlit_folium import folium_static
 
 # Configurazione pagina
 st.set_page_config(layout="wide", page_title="Dashboard Elezioni Regionali 2024", page_icon="🗳️")
