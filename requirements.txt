@@ -1,0 +1,10 @@
+# requirements.txt
+streamlit
+pandas
+geopandas
+folium
+streamlit-folium
+plotly
+openpyxl
+shapely
+fiona
