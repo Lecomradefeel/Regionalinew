@@ -32,11 +32,12 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
         if df_voti is not None and join_col is not None:
             # Crea una copia per evitare di modificare l'originale
             gdf_copy = gdf.copy()
+            gdf_copy = gdf_copy.reset_index(drop=True)  # Resetta l'indice per assicurare un indice sequenziale
             
             # Preparazione dei dati per il join
             if join_col not in df_voti.columns:
                 print(f"Colonna di join '{join_col}' non trovata in df_voti")
-                gdf_copy['id'] = range(len(gdf_copy))
+                gdf_copy['id_map'] = gdf_copy.index.astype(str)  # Crea una colonna per l'id
                 hover_data = {colonna_id: True}
                 color_col = None
             else:
@@ -66,6 +67,7 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                     
                     # Unisci con i dati geografici
                     gdf_copy = gdf_copy.merge(grouped_df, how='left', left_on=colonna_id, right_on=join_col)
+                    gdf_copy['id_map'] = gdf_copy.index.astype(str)  # Crea una colonna per l'id
                     
                     # Crea la differenza per la colorazione
                     if 'CSX %' in gdf_copy.columns and 'CDX %' in gdf_copy.columns:
@@ -93,17 +95,18 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                     
                 except Exception as e:
                     print(f"Errore nel join dei dati: {str(e)}")
-                    gdf_copy['id'] = range(len(gdf_copy))
+                    gdf_copy['id_map'] = gdf_copy.index.astype(str)  # Crea una colonna per l'id
                     hover_data = {colonna_id: True}
                     color_col = None
         else:
             # Se non ci sono dati di voto, usa il GeoDataFrame originale
             gdf_copy = gdf.copy()
-            gdf_copy['id'] = range(len(gdf_copy))
+            gdf_copy = gdf_copy.reset_index(drop=True)  # Resetta l'indice
+            gdf_copy['id_map'] = gdf_copy.index.astype(str)  # Crea una colonna per l'id
             hover_data = {colonna_id: True}
             color_col = None
         
-        # Crea una mappa con Plotly
+        # Crea una mappa con Plotly - usiamo la versione semplificata per evitare problemi
         if color_col and 'Diff' in gdf_copy.columns:
             # Mappa colorata in base alla differenza CSX-CDX
             # Verifica che ci siano effettivamente differenze da visualizzare
@@ -113,12 +116,16 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                     abs(gdf_copy['Diff'].min() if not pd.isna(gdf_copy['Diff'].min()) else 0), 
                     abs(gdf_copy['Diff'].max() if not pd.isna(gdf_copy['Diff'].max()) else 0)
                 )
+                if max_abs_diff == 0:
+                    max_abs_diff = 10  # Valore di default se non ci sono differenze
                 range_color = [-max_abs_diff, max_abs_diff]  # Scala simmetrica
                 
-                fig = px.choropleth_mapbox(
+                # Usiamo px.choropleth invece di choropleth_mapbox
+                fig = px.choropleth(
                     gdf_copy,
                     geojson=gdf_copy.__geo_interface__,
-                    locations='id',
+                    featureidkey='properties.id_map',  # Usa questa chiave per collegare i dati alla geometria
+                    locations='id_map',
                     color='Diff',
                     color_continuous_scale=[
                         [0, "rgb(0, 0, 255)"],       # Blu forte per CDX molto avanti
@@ -129,11 +136,18 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                     ],
                     range_color=range_color,
                     hover_name=gdf_copy[colonna_id],
-                    hover_data=hover_data,
-                    mapbox_style="carto-positron",
-                    center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
-                    zoom=10,
-                    opacity=opacita
+                    hover_data=hover_data
+                )
+                
+                # Configura la mappa per renderla simile a mapbox
+                fig.update_geos(
+                    fitbounds="locations",
+                    visible=False,
+                    resolution=110,
+                    showcountries=True,
+                    countrycolor="Black",
+                    showsubunits=True,
+                    subunitcolor="Black"
                 )
                 
                 # Aggiungi una title per la colorbar
@@ -146,31 +160,47 @@ def crea_mappa_plotly(gdf, colonna_id, colore, opacita, df_voti=None, join_col=N
                 )
             else:
                 # Se non ci sono differenze valide, usa il colore predefinito
-                fig = px.choropleth_mapbox(
+                fig = px.choropleth(
                     gdf_copy,
                     geojson=gdf_copy.__geo_interface__,
-                    locations='id',
+                    featureidkey='properties.id_map',
+                    locations='id_map',
                     hover_name=gdf_copy[colonna_id],
                     hover_data=hover_data,
-                    mapbox_style="carto-positron",
-                    center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
-                    zoom=10,
-                    opacity=opacita,
                     color_discrete_sequence=[colore]
+                )
+                
+                # Configura la mappa
+                fig.update_geos(
+                    fitbounds="locations",
+                    visible=False,
+                    resolution=110,
+                    showcountries=True,
+                    countrycolor="Black",
+                    showsubunits=True,
+                    subunitcolor="Black"
                 )
         else:
             # Mappa con colore fisso
-            fig = px.choropleth_mapbox(
+            fig = px.choropleth(
                 gdf_copy,
                 geojson=gdf_copy.__geo_interface__,
-                locations='id',
+                featureidkey='properties.id_map',
+                locations='id_map',
                 hover_name=gdf_copy[colonna_id],
                 hover_data=hover_data,
-                mapbox_style="carto-positron",
-                center={"lat": gdf_copy.geometry.centroid.y.mean(), "lon": gdf_copy.geometry.centroid.x.mean()},
-                zoom=10,
-                opacity=opacita,
                 color_discrete_sequence=[colore]
+            )
+            
+            # Configura la mappa
+            fig.update_geos(
+                fitbounds="locations",
+                visible=False,
+                resolution=110,
+                showcountries=True,
+                countrycolor="Black",
+                showsubunits=True,
+                subunitcolor="Black"
             )
         
         # Aumenta le dimensioni della mappa
